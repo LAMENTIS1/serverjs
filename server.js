@@ -1,41 +1,58 @@
-const http = require('http');
-const WebSocket = require('ws');
+const express = require('express');
+const app = express();
+const bodyParser = require('body-parser');
+const webrtc = require("wrtc");
 
-// Create an HTTP server
-const server = http.createServer();
+let senderStream;
 
-// Create a WebSocket server that uses the HTTP server
-const wss = new WebSocket.Server({ server });
+app.use(express.static('public'));
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
 
-console.log('Signaling server running on http://localhost:8080');
-
-// Broadcast message to all clients except the sender
-function broadcast(message, sender) {
-    wss.clients.forEach(client => {
-        if (client !== sender && client.readyState === WebSocket.OPEN) {
-            client.send(message);
-        }
+app.post("/consumer", async ({ body }, res) => {
+    const peer = new webrtc.RTCPeerConnection({
+        iceServers: [
+            {
+                urls: "stun:stun.stunprotocol.org"
+            }
+        ]
     });
-}
+    const desc = new webrtc.RTCSessionDescription(body.sdp);
+    await peer.setRemoteDescription(desc);
+    senderStream.getTracks().forEach(track => peer.addTrack(track, senderStream));
+    const answer = await peer.createAnswer();
+    await peer.setLocalDescription(answer);
+    const payload = {
+        sdp: peer.localDescription
+    }
 
-wss.on('connection', (ws) => {
-    console.log('Client connected');
-
-    ws.on('message', (message) => {
-        console.log('Received message:', message);
-        broadcast(message, ws);
-    });
-
-    ws.on('close', () => {
-        console.log('Client disconnected');
-    });
-
-    ws.on('error', (error) => {
-        console.error('WebSocket error:', error);
-    });
+    res.json(payload);
 });
 
-// Start the HTTP server
-server.listen(8080, () => {
-    console.log('HTTP server listening on port 8080');
+app.post('/broadcast', async ({ body }, res) => {
+    
+    const peer = new webrtc.RTCPeerConnection({
+        iceServers: [
+            {
+                urls: "stun:stun.stunprotocol.org"
+            }
+        ]
+    });
+    peer.ontrack = (e) => handleTrackEvent(e, peer);
+    const desc = new webrtc.RTCSessionDescription(body.sdp);
+    await peer.setRemoteDescription(desc);
+    const answer = await peer.createAnswer();
+    await peer.setLocalDescription(answer);
+    const payload = {
+        sdp: peer.localDescription
+    }
+
+    res.json(payload);
 });
+
+function handleTrackEvent(e, peer) {
+    senderStream = e.streams[0];
+};
+
+
+app.listen(5000, () => console.log('server started'));
